@@ -6,7 +6,6 @@
 <title>Base Forte Locação — Sistema de Gestão</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
 :root{
@@ -274,13 +273,99 @@ window.addEventListener('error', function(e){
   }
 });
 
-const SUPABASE_URL = 'https://SEU-PROJETO.supabase.co';
-const SUPABASE_ANON_KEY = 'SUA-ANON-KEY-AQUI';
+/* ======================================================
+   BACKEND — Cloudflare Worker + D1 (substitui o Supabase)
+   ====================================================== */
+const API_BASE_URL = 'https://baseforte-worker.fosterconstrutora.workers.dev';
+
+function createCustomClient(baseUrl){
+  function getToken(){ return localStorage.getItem('bf_session') || null; }
+  function setToken(t){ if(t) localStorage.setItem('bf_session', t); else localStorage.removeItem('bf_session'); }
+  function authHeaders(){
+    const h = {'Content-Type':'application/json'};
+    const t = getToken();
+    if(t) h['Authorization'] = 'Bearer ' + t;
+    return h;
+  }
+
+  function from(table){
+    const q = {
+      _table: table, _order: null, _filters: [], _single: false, _method: 'GET', _body: null,
+      select(){ return q; },
+      order(col, opts){ q._order = { col, ascending: !opts || opts.ascending !== false }; return q; },
+      eq(col, val){ q._filters.push([col, val]); return q; },
+      single(){ q._single = true; return q; },
+      insert(payload){ q._method = 'POST'; q._body = payload; return q; },
+      update(payload){ q._method = 'PATCH'; q._body = payload; return q; },
+      delete(){ q._method = 'DELETE'; return q; },
+      then(resolve, reject){ q._exec().then(resolve, reject); },
+      async _exec(){
+        try{
+          let url = `${baseUrl}/api/${q._table}`;
+          if((q._method === 'PATCH' || q._method === 'DELETE')){
+            const idFiltro = q._filters.find(f => f[0] === 'id');
+            if(idFiltro) url += `/${idFiltro[1]}`;
+          }
+          if(q._method === 'GET' && q._order){
+            url += `?order=${q._order.col}&dir=${q._order.ascending ? 'asc' : 'desc'}`;
+          }
+          const opts = { method: q._method, headers: authHeaders() };
+          if(q._body) opts.body = JSON.stringify(q._body);
+
+          const res = await fetch(url, opts);
+          if(!res.ok){
+            const errBody = await res.json().catch(() => ({ message: res.statusText }));
+            return { data: null, error: errBody };
+          }
+          let data = await res.json().catch(() => null);
+          if(q._single && Array.isArray(data)) data = data[0] || null;
+          return { data, error: null };
+        }catch(e){
+          return { data: null, error: { message: e.message } };
+        }
+      }
+    };
+    return q;
+  }
+
+  return {
+    from,
+    auth: {
+      async getSession(){
+        const t = getToken();
+        if(!t) return { data: { session: null } };
+        try{
+          const res = await fetch(`${baseUrl}/api/me`, { headers: authHeaders() });
+          if(!res.ok){ setToken(null); return { data: { session: null } }; }
+          const user = await res.json();
+          return { data: { session: { user } } };
+        }catch(e){ return { data: { session: null } }; }
+      },
+      async signInWithPassword({ email, password }){
+        try{
+          const res = await fetch(`${baseUrl}/api/login`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password })
+          });
+          if(!res.ok){ const err = await res.json().catch(() => ({message:'Erro'})); return { error: err }; }
+          const j = await res.json();
+          setToken(j.token);
+          return { data: { session: { user: j.user } }, error: null };
+        }catch(e){ return { error: { message: e.message } }; }
+      },
+      async signOut(){
+        try{ await fetch(`${baseUrl}/api/logout`, { method: 'POST', headers: authHeaders() }); }catch(e){}
+        setToken(null);
+      }
+    }
+  };
+}
+
 let supabaseClient = null;
 let supaOk = false;
 try{
-  if(!SUPABASE_URL.includes('SEU-PROJETO')){
-    supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  if(!API_BASE_URL.includes('SEU-WORKER')){
+    supabaseClient = createCustomClient(API_BASE_URL);
     supaOk = true;
   }
 }catch(e){ console.error(e); }
@@ -334,7 +419,7 @@ async function loadAll(){
       DB.locacoes = l.data || [];
       DB.itens_locacao = i.data || [];
       DB.pagamentos = p.data || [];
-    }catch(e){ console.error(e); toast('Erro ao carregar do Supabase — usando modo local', false); }
+    }catch(e){ console.error(e); toast('Erro ao carregar dados — usando modo local', false); }
   }
 }
 
@@ -371,7 +456,7 @@ async function render(view){
    ====================================================== */
 function configNote(){
   if(supaOk) return '';
-  return `<div class="config-note">⚠ Supabase ainda não configurado — edite <span class="mono">SUPABASE_URL</span> e <span class="mono">SUPABASE_ANON_KEY</span> no topo do arquivo. Rodando em modo demonstração (dados não são salvos).</div>`;
+  return `<div class="config-note">⚠ Backend ainda não configurado — edite <span class="mono">API_BASE_URL</span> no topo do arquivo com o endereço do seu Worker. Rodando em modo demonstração (dados não são salvos).</div>`;
 }
 
 /* ======================================================
