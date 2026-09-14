@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
 <style>
 :root{
   --charcoal:#141414;
@@ -234,8 +235,10 @@ tr:hover td{background:#F2EFE8;}
       <button class="nav-btn" data-view="ferramentas"><span class="icon">▣</span><span class="label">Ferramentas</span></button>
       <button class="nav-btn" data-view="nova-locacao"><span class="icon">＋</span><span class="label">Nova Locação</span></button>
       <button class="nav-btn" data-view="locacoes"><span class="icon">☰</span><span class="label">Locações</span></button>
+      <button class="nav-btn" data-view="usuarios"><span class="icon">◈</span><span class="label">Usuários</span></button>
     </nav>
     <div class="sidebar-footer">
+      <button class="logout-btn" id="backup-btn" style="margin-bottom:6px;" onclick="exportarBackup()">⬇ Backup dos dados</button>
       <button class="logout-btn" id="logout-btn">↩ Sair</button>
       <div class="dev-signature dev-signature-sidebar">Foster Engenharia &amp; Construção</div>
     </div>
@@ -370,6 +373,19 @@ try{
   }
 }catch(e){ console.error(e); }
 
+async function apiFetch(path, options={}){
+  const token = localStorage.getItem('bf_session');
+  const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+  if(token) headers['Authorization'] = 'Bearer ' + token;
+  try{
+    const res = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
+    const data = await res.json().catch(() => null);
+    return { ok: res.ok, status: res.status, data };
+  }catch(e){
+    return { ok: false, status: 0, data: { message: e.message } };
+  }
+}
+
 /* ---- estado local (fallback demo se Supabase não configurado) ---- */
 let DB = {
   clientes: [],
@@ -400,6 +416,33 @@ function fmtMoney(v){ return 'R$ ' + Number(v||0).toLocaleString('pt-BR',{minimu
 function fmtDate(d){ if(!d) return '-'; const dt = new Date(d+'T00:00:00'); return dt.toLocaleDateString('pt-BR'); }
 function todayISO(){ return new Date().toISOString().slice(0,10); }
 function uid(){ return 'id-'+Math.random().toString(36).slice(2,10); }
+function fmtNumero(loc){
+  if(!loc || !loc.numero) return '-';
+  const ano = new Date(loc.data_retirada || loc.criado_em || Date.now()).getFullYear();
+  return `${String(loc.numero).padStart(4,'0')}/${String(ano).slice(-2)}`;
+}
+function assinaturaEletronica(){
+  const quem = usuarioLogado || 'usuário não identificado';
+  const agora = new Date().toLocaleString('pt-BR');
+  return `Documento gerado e assinado eletronicamente por ${quem} em ${agora}`;
+}
+
+function gerarQRCodeDataURL(texto){
+  return new Promise((resolve) => {
+    if(typeof QRCode === 'undefined'){ resolve(null); return; }
+    QRCode.toDataURL(texto, { margin: 1, width: 200 }, (err, url) => {
+      if(err){ console.error('Erro ao gerar QR code', err); resolve(null); return; }
+      resolve(url);
+    });
+  });
+}
+
+function linkWhatsappEmpresa(){
+  const digitos = (EMPRESA.telefone || '').replace(/\D/g, '');
+  const numeroCompleto = digitos.startsWith('55') ? digitos : `55${digitos}`;
+  const msg = `Olá! Vim através de um documento da ${EMPRESA.nome}.`;
+  return `https://wa.me/${numeroCompleto}?text=${encodeURIComponent(msg)}`;
+}
 
 /* ======================================================
    CARREGAMENTO DE DADOS
@@ -428,7 +471,7 @@ async function loadAll(){
    ====================================================== */
 const titles = {
   dashboard:'Dashboard', clientes:'Clientes', ferramentas:'Ferramentas',
-  'nova-locacao':'Nova Locação', locacoes:'Locações'
+  'nova-locacao':'Nova Locação', locacoes:'Locações', usuarios:'Usuários'
 };
 document.querySelectorAll('.nav-btn').forEach(btn=>{
   btn.addEventListener('click', ()=>{
@@ -449,6 +492,7 @@ async function render(view){
   else if(view === 'ferramentas') renderFerramentas(el);
   else if(view === 'nova-locacao') renderNovaLocacao(el);
   else if(view === 'locacoes') renderLocacoes(el);
+  else if(view === 'usuarios') renderUsuarios(el);
 }
 
 /* ======================================================
@@ -495,7 +539,7 @@ function tableLocacoes(list){
         l.status==='cancelada' ? '<span class="badge badge-neutral">Cancelada</span>' :
         '<span class="badge badge-ok">Ativa</span>';
       return `<tr>
-        <td class="mono">#${l.numero||'-'}</td>
+        <td class="mono">#${fmtNumero(l)}</td>
         <td>${cliente ? cliente.nome : '—'}</td>
         <td>${fmtDate(l.data_retirada)}</td>
         <td>${fmtDate(l.data_devolucao_prevista)}</td>
@@ -1090,7 +1134,7 @@ function tableLocacoesCompleta(list){
         l.status==='cancelada' ? '<span class="badge badge-neutral">Cancelada</span>' :
         '<span class="badge badge-ok">Ativa</span>';
       return `<tr>
-        <td class="mono">#${l.numero||'-'}</td>
+        <td class="mono">#${fmtNumero(l)}</td>
         <td>${cliente?cliente.nome:'—'}</td>
         <td>${fmtDate(l.data_retirada)}</td>
         <td>${fmtDate(l.data_devolucao_prevista)}</td>
@@ -1172,6 +1216,105 @@ function verLocacao(id){
 }
 
 /* ======================================================
+   USUÁRIOS (gestão de logins)
+   ====================================================== */
+async function renderUsuarios(el){
+  if(!supaOk){
+    el.innerHTML = `${configNote()}<div class="empty"><div class="display">Indisponível no modo demonstração</div>Configure o backend para gerenciar usuários.</div>`;
+    return;
+  }
+
+  el.innerHTML = `<div class="empty">Carregando…</div>`;
+  const resp = await apiFetch('/api/usuarios');
+  if(!resp.ok){
+    el.innerHTML = `<div class="empty"><div class="display">Erro ao carregar usuários</div>${resp.data?.message || ''}</div>`;
+    return;
+  }
+  const usuarios = resp.data || [];
+
+  el.innerHTML = `
+    <div class="grid grid-2">
+      <div class="panel">
+        <h2>Novo usuário</h2>
+        <div style="font-size:13px; color:var(--ink-soft); margin-bottom:12px;">Cada pessoa que for usar o sistema deve ter seu próprio login.</div>
+        <form id="form-usuario">
+          <div class="field"><label>E-mail</label><input id="usu-email" type="email" required></div>
+          <div class="field"><label>Senha</label><input id="usu-senha" type="password" required minlength="6" placeholder="mínimo 6 caracteres"></div>
+          <button type="submit" class="btn btn-primary">Criar usuário</button>
+        </form>
+      </div>
+      <div class="panel">
+        <h2>Usuários cadastrados <span class="tag">${usuarios.length}</span></h2>
+        <div id="lista-usuarios">${listaUsuariosHTML(usuarios)}</div>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('form-usuario').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const email = document.getElementById('usu-email').value;
+    const senha = document.getElementById('usu-senha').value;
+    const resp2 = await apiFetch('/api/usuarios', { method: 'POST', body: JSON.stringify({ email, password: senha }) });
+    if(!resp2.ok){
+      toast(resp2.data?.message || 'Erro ao criar usuário', false);
+      return;
+    }
+    toast('Usuário criado com sucesso');
+    render('usuarios');
+  });
+}
+
+function listaUsuariosHTML(usuarios){
+  if(!usuarios.length) return `<div class="empty"><div class="display">Nenhum usuário encontrado</div></div>`;
+  return `<table><thead><tr><th>E-mail</th><th>Desde</th><th>Ações</th></tr></thead><tbody>
+    ${usuarios.map(u => `<tr>
+      <td>${u.email}</td>
+      <td class="mono">${fmtDate((u.criado_em||'').slice(0,10))}</td>
+      <td>${usuarios.length > 1 ? `<button class="btn btn-danger btn-sm" onclick="excluirUsuario('${u.id}')">Excluir</button>` : '<span class="badge badge-neutral">Único</span>'}</td>
+    </tr>`).join('')}
+    </tbody></table>`;
+}
+
+async function excluirUsuario(id){
+  if(!confirm('Excluir este usuário? Ele não vai mais conseguir entrar no sistema.')) return;
+  const resp = await apiFetch(`/api/usuarios/${id}`, { method: 'DELETE' });
+  if(!resp.ok){
+    toast(resp.data?.message || 'Não foi possível excluir', false);
+    return;
+  }
+  toast('Usuário excluído');
+  render('usuarios');
+}
+
+/* ======================================================
+   BACKUP — exportar todos os dados em um arquivo
+   ====================================================== */
+async function exportarBackup(){
+  if(!supaOk){ toast('Indisponível no modo demonstração', false); return; }
+  toast('Preparando backup...');
+  await loadAll();
+  const backup = {
+    gerado_em: new Date().toISOString(),
+    empresa: EMPRESA.nome,
+    clientes: DB.clientes,
+    ferramentas: DB.ferramentas,
+    locacoes: DB.locacoes,
+    itens_locacao: DB.itens_locacao,
+    pagamentos: DB.pagamentos
+  };
+  const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `backup-baseforte-${todayISO()}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  toast('Backup baixado com sucesso');
+}
+
+/* ======================================================
    PAPEL TIMBRADO — cabeçalho e rodapé padrão de todos os PDFs
    ====================================================== */
 function desenharCabecalhoPDF(doc, titulo, subtitulo){
@@ -1227,12 +1370,12 @@ function desenharRodapePDF(doc){
 /* ======================================================
    GERAÇÃO DE PDF — CONTRATO
    ====================================================== */
-function gerarContratoPDF(loc){
+async function gerarContratoPDF(loc){
   const cliente = DB.clientes.find(c=>c.id===loc.cliente_id) || {};
   const itens = DB.itens_locacao.filter(i=>i.locacao_id===loc.id);
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF();
-  let y = desenharCabecalhoPDF(doc, 'CONTRATO DE LOCAÇÃO DE FERRAMENTAS', `Contrato Nº ${loc.numero || '-'}`);
+  let y = desenharCabecalhoPDF(doc, 'CONTRATO DE LOCAÇÃO DE FERRAMENTAS', `Contrato Nº ${fmtNumero(loc)}`);
 
   doc.setFont('helvetica','bold'); doc.text('LOCADORA', 15, y); y+=6;
   doc.setFont('helvetica','normal');
@@ -1288,22 +1431,37 @@ function gerarContratoPDF(loc){
   doc.text('_______________________________', 15, y);
   doc.text('_______________________________', 115, y); y+=5;
   doc.text('LOCADORA', 15, y);
-  doc.text('LOCATÁRIO', 115, y);
+  doc.text('LOCATÁRIO', 115, y); y+=8;
+  doc.setFontSize(7.5); doc.setTextColor(120,120,120);
+  const linhasAssin = doc.splitTextToSize(assinaturaEletronica(), 120);
+  doc.text(linhasAssin, 15, y);
+  doc.setTextColor(0,0,0);
+  y += linhasAssin.length*3.5 + 6;
+
+  try{
+    const qrUrl = await gerarQRCodeDataURL(linkWhatsappEmpresa());
+    if(qrUrl){
+      doc.addImage(qrUrl, 'PNG', 15, y, 20, 20);
+      doc.setFontSize(7); doc.setTextColor(120,120,120);
+      doc.text('Fale conosco pelo WhatsApp', 38, y + 12);
+      doc.setTextColor(0,0,0);
+    }
+  }catch(e){ console.error('QR code contrato', e); }
 
   desenharRodapePDF(doc);
-  doc.save(`contrato-${loc.numero || 'novo'}.pdf`);
+  doc.save(`contrato-${fmtNumero(loc).replace('/','-')}.pdf`);
   toast('Contrato PDF gerado');
 }
 
 /* ======================================================
    GERAÇÃO DE PDF — RECIBO
    ====================================================== */
-function gerarReciboPDF(loc){
+async function gerarReciboPDF(loc){
   const cliente = DB.clientes.find(c=>c.id===loc.cliente_id) || {};
   const itens = DB.itens_locacao.filter(i=>i.locacao_id===loc.id);
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF();
-  let y = desenharCabecalhoPDF(doc, 'RECIBO', `Referente à Locação Nº ${loc.numero || '-'}`);
+  let y = desenharCabecalhoPDF(doc, 'RECIBO', `Referente à Locação Nº ${fmtNumero(loc)}`);
 
   doc.setFontSize(11);
   doc.text(`Recebemos de: ${cliente.nome || '-'}`, 15, y); y+=7;
@@ -1330,24 +1488,39 @@ function gerarReciboPDF(loc){
   doc.text('_______________________________', 115, y); y+=5;
   doc.setFontSize(9);
   doc.text(EMPRESA.nome, 15, y);
-  doc.text(cliente.nome || 'Cliente', 115, y);
+  doc.text(cliente.nome || 'Cliente', 115, y); y+=8;
+  doc.setFontSize(7.5); doc.setTextColor(120,120,120);
+  const linhasAssinRecibo = doc.splitTextToSize(assinaturaEletronica(), 120);
+  doc.text(linhasAssinRecibo, 15, y);
+  doc.setTextColor(0,0,0);
+  y += linhasAssinRecibo.length*3.5 + 6;
+
+  try{
+    const qrUrlRecibo = await gerarQRCodeDataURL(linkWhatsappEmpresa());
+    if(qrUrlRecibo){
+      doc.addImage(qrUrlRecibo, 'PNG', 15, y, 20, 20);
+      doc.setFontSize(7); doc.setTextColor(120,120,120);
+      doc.text('Fale conosco pelo WhatsApp', 38, y + 12);
+      doc.setTextColor(0,0,0);
+    }
+  }catch(e){ console.error('QR code recibo', e); }
 
   desenharRodapePDF(doc);
-  doc.save(`recibo-${loc.numero || 'novo'}.pdf`);
+  doc.save(`recibo-${fmtNumero(loc).replace('/','-')}.pdf`);
   toast('Recibo PDF gerado');
 }
 
 /* ======================================================
    TERMO DE RETIRADA / DEVOLUÇÃO (impressão para assinatura)
    ====================================================== */
-function gerarTermoPDF(loc, tipo){
+async function gerarTermoPDF(loc, tipo){
   // tipo: 'retirada' ou 'devolucao'
   const cliente = DB.clientes.find(c=>c.id===loc.cliente_id) || {};
   const itens = DB.itens_locacao.filter(i=>i.locacao_id===loc.id);
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF();
   const titulo = tipo === 'retirada' ? 'TERMO DE RETIRADA DE FERRAMENTAS' : 'TERMO DE DEVOLUÇÃO DE FERRAMENTAS';
-  let y = desenharCabecalhoPDF(doc, titulo, `Locação Nº ${loc.numero || '-'}`);
+  let y = desenharCabecalhoPDF(doc, titulo, `Locação Nº ${fmtNumero(loc)}`);
 
   doc.setFont('helvetica','bold'); doc.text('LOCADORA', 15, y); y+=5.5;
   doc.setFont('helvetica','normal');
@@ -1400,16 +1573,33 @@ function gerarTermoPDF(loc, tipo){
   doc.text('_______________________________', 15, y);
   doc.text('_______________________________', 115, y); y+=5;
   doc.text('Assinatura — Locadora', 15, y);
-  doc.text('Assinatura — Locatário', 115, y);
+  doc.text('Assinatura — Locatário', 115, y); y+=8;
+  doc.setFontSize(7.5); doc.setTextColor(120,120,120);
+  const linhasAssinTermo = doc.splitTextToSize(assinaturaEletronica(), 120);
+  doc.text(linhasAssinTermo, 15, y);
+  doc.setTextColor(0,0,0);
+  y += linhasAssinTermo.length*3.5 + 6;
+
+  try{
+    const qrUrlTermo = await gerarQRCodeDataURL(linkWhatsappEmpresa());
+    if(qrUrlTermo){
+      doc.addImage(qrUrlTermo, 'PNG', 15, y, 20, 20);
+      doc.setFontSize(7); doc.setTextColor(120,120,120);
+      doc.text('Fale conosco pelo WhatsApp', 38, y + 12);
+      doc.setTextColor(0,0,0);
+    }
+  }catch(e){ console.error('QR code termo', e); }
 
   desenharRodapePDF(doc);
-  doc.save(`termo-${tipo}-${loc.numero || 'novo'}.pdf`);
+  doc.save(`termo-${tipo}-${fmtNumero(loc).replace('/','-')}.pdf`);
   toast(`Termo de ${tipo === 'retirada' ? 'retirada' : 'devolução'} gerado`);
 }
 
 /* ======================================================
    AUTENTICAÇÃO
    ====================================================== */
+let usuarioLogado = null;
+
 async function initAuth(){
   if(!supaOk){
     // modo demo: sem login, entra direto
@@ -1420,6 +1610,7 @@ async function initAuth(){
   try{
     const { data: { session } } = await supabaseClient.auth.getSession();
     if(session){
+      usuarioLogado = session.user?.email || null;
       document.getElementById('app-shell').classList.remove('hidden');
       render('dashboard');
     } else {
@@ -1446,6 +1637,7 @@ document.getElementById('form-login').addEventListener('submit', async (e)=>{
     errBox.style.display = 'block';
     return;
   }
+  usuarioLogado = data?.session?.user?.email || email;
   document.getElementById('login-screen').classList.add('hidden');
   document.getElementById('app-shell').classList.remove('hidden');
   render('dashboard');
@@ -1453,6 +1645,7 @@ document.getElementById('form-login').addEventListener('submit', async (e)=>{
 
 document.getElementById('logout-btn').addEventListener('click', async ()=>{
   if(supaOk) await supabaseClient.auth.signOut();
+  usuarioLogado = null;
   document.getElementById('app-shell').classList.add('hidden');
   document.getElementById('login-screen').classList.remove('hidden');
   document.getElementById('login-email').value = '';
