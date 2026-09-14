@@ -1011,6 +1011,14 @@ async function salvarLocacao(){
     });
     const {error:e2} = await supabaseClient.from('itens_locacao').insert(itens);
     if(e2) console.error(e2);
+    // desconta o estoque disponível de cada ferramenta locada
+    for(const i of carrinho){
+      const f = DB.ferramentas.find(x=>x.id===i.ferramenta_id);
+      if(f){
+        const novaQtd = Math.max(0, f.quantidade_disponivel - i.quantidade);
+        await supabaseClient.from('ferramentas').update({quantidade_disponivel: novaQtd}).eq('id', f.id);
+      }
+    }
     if(caucao > 0){
       await supabaseClient.from('pagamentos').insert({locacao_id: locacaoId, tipo:'caucao', valor: caucao, forma_pagamento:'a definir'});
     }
