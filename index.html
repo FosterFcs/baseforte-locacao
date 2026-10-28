@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Base Forte Locação — Sistema de Gestão</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -130,6 +130,8 @@ button.btn:active{transform:scale(0.98);}
 .btn-outline:hover{background:var(--charcoal); color:#fff;}
 .btn-sm{padding:6px 12px; font-size:12.5px;}
 .btn-danger{background:none; color:var(--red); border:1.5px solid var(--red);}
+button.btn.btn-outline{border:1.5px solid var(--charcoal);}
+button.btn.btn-danger{border:1.5px solid var(--red);}
 
 /* ---- table ---- */
 table{width:100%; border-collapse:collapse; font-size:13.5px;}
@@ -159,6 +161,7 @@ tr:hover td{background:#F2EFE8;}
   background:var(--charcoal); color:#fff; border-radius:var(--radius); padding:16px 18px; margin-top:14px;
 }
 .summary-box .row{justify-content:space-between; margin-bottom:6px; font-size:14px;}
+.summary-box .row > *{flex:0 1 auto;}
 .summary-box .total{font-family:'JetBrains Mono',monospace; font-size:22px; color:var(--amber); font-weight:700;}
 
 .empty{text-align:center; padding:40px 20px; color:var(--ink-soft);}
@@ -207,6 +210,93 @@ tr:hover td{background:#F2EFE8;}
   color:#6B6F76; font-size:9.5px; text-align:left; margin-top:8px; padding:0 2px;
   border-top:none;
 }
+.topbar-logout{display:none;}
+@media(min-width:769px){
+  .panel{overflow-x:auto;}
+  td.actions-cell{display:table-cell; min-width:180px;}
+  td.actions-cell .btn{margin:2px 0 2px 4px;}
+}
+
+/* ======================================================
+   CELULAR (até 768px) — menu inferior, tabelas em cartões
+   ====================================================== */
+@media(max-width:768px){
+  .app{flex-direction:column;}
+
+  /* menu lateral vira barra fixa no rodapé */
+  .sidebar{
+    position:fixed; left:0; right:0; bottom:0; width:100%; z-index:100;
+    flex-direction:row; border-top:3px solid var(--amber);
+    padding-bottom:env(safe-area-inset-bottom);
+    box-shadow:0 -4px 16px rgba(0,0,0,0.25);
+  }
+  .brand, .sidebar-footer{display:none;}
+  nav{display:flex; padding:4px; gap:2px;}
+  nav button{
+    flex:1; flex-direction:column; justify-content:center; gap:3px;
+    padding:8px 2px; margin:0; font-size:9.5px; text-align:center; min-width:0;
+  }
+  nav button.active{font-weight:600;}
+  nav button span.label{display:block !important; max-width:100%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  nav .icon{font-size:18px; width:auto;}
+
+  .topbar{padding:12px 16px; gap:10px;}
+  .topbar h1{font-size:20px;}
+  .topbar-actions{display:flex; gap:6px; flex-shrink:0;}
+  .topbar-logout{
+    display:block; background:none; border:1.5px solid var(--charcoal); color:var(--charcoal);
+    border-radius:var(--radius); padding:7px 12px; font-size:13px; font-weight:600; cursor:pointer;
+    font-family:'Inter',sans-serif; flex-shrink:0;
+  }
+  .content{padding:16px 14px calc(96px + env(safe-area-inset-bottom));}
+
+  /* cartões e painéis */
+  .grid{gap:10px;}
+  .panel{padding:16px 14px; margin-bottom:14px;}
+  .panel h2{font-size:17px;}
+  .stat{padding:12px 14px;}
+  .stat .num{font-size:20px; word-break:break-word;}
+  .stat .lbl{font-size:11px;}
+  #lista-comuns{grid-template-columns:1fr 1fr;}
+
+  /* formulários empilhados; 16px evita zoom automático no iPhone */
+  input,select,textarea{font-size:16px; padding:11px 12px;}
+  .row{flex-direction:column; gap:0;}
+  .row > .field{max-width:none !important;}
+  .summary-box .row{flex-direction:row; gap:12px;}
+  form button.btn, #resumo button.btn{flex:1;}
+  button.btn{min-height:42px;}
+  .btn-sm{min-height:36px;}
+
+  .item-row{flex-wrap:wrap;}
+  .item-row select{flex:1 1 100%;}
+  .item-row .qty{max-width:none; flex:1;}
+
+  /* tabelas viram cartões empilhados */
+  table, thead, tbody, tr, td{display:block; width:100%;}
+  thead{display:none;}
+  tr{
+    background:#fff; border:1px solid var(--line); border-radius:var(--radius);
+    padding:6px 12px; margin-bottom:10px; border-left:4px solid var(--amber);
+  }
+  tr:hover td{background:none;}
+  td{
+    display:flex; justify-content:space-between; align-items:center; gap:12px;
+    padding:8px 0; border-bottom:1px dashed var(--line); text-align:right; word-break:break-word;
+  }
+  td::before{
+    content:attr(data-label); flex-shrink:0; text-align:left;
+    font-size:11px; font-weight:600; color:var(--ink-soft); text-transform:uppercase; letter-spacing:0.04em;
+  }
+  td:last-child{border-bottom:none;}
+  td.actions-cell, td[data-label=""]{justify-content:flex-start; flex-wrap:wrap; gap:6px; padding-top:10px;}
+  td.actions-cell::before, td[data-label=""]::before{display:none;}
+  td.actions-cell .btn{flex:1 1 auto;}
+
+  .toast{left:14px; right:14px; bottom:calc(84px + env(safe-area-inset-bottom)); text-align:center;}
+  .login-wrap{padding:16px;}
+  .login-card{padding:28px 20px;}
+}
 </style>
 </head>
 <body>
@@ -248,6 +338,10 @@ tr:hover td{background:#F2EFE8;}
     <div class="hazard"></div>
     <div class="topbar">
       <h1 id="page-title">Dashboard</h1>
+      <div class="topbar-actions">
+        <button type="button" class="topbar-logout" onclick="exportarBackup()">⬇ Backup</button>
+        <button type="button" class="topbar-logout" onclick="document.getElementById('logout-btn').click()">↩ Sair</button>
+      </div>
     </div>
     <div class="content" id="content"></div>
   </div>
@@ -482,6 +576,22 @@ document.querySelectorAll('.nav-btn').forEach(btn=>{
     render(view);
   });
 });
+
+/* No celular as tabelas viram cartões: cada célula recebe o nome da coluna */
+function rotularTabelas(root){
+  root.querySelectorAll('table').forEach(t=>{
+    const cab = Array.from(t.querySelectorAll('thead th')).map(th=>th.textContent.trim());
+    t.querySelectorAll('tbody tr').forEach(tr=>{
+      Array.from(tr.children).forEach((td,i)=>{
+        if(!td.hasAttribute('data-label')) td.setAttribute('data-label', cab[i] || '');
+      });
+    });
+  });
+}
+(function(){
+  const c = document.getElementById('content');
+  if(c) new MutationObserver(()=>rotularTabelas(c)).observe(c,{childList:true, subtree:true});
+})();
 
 async function render(view){
   const el = document.getElementById('content');
